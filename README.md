@@ -1,3 +1,23 @@
+# audio-test
+ai小智 实时聊天+声源定位 同时启用
+板子选择:aevibot-head
+
+使用的代码版本:
+提交： 49ac8a6da399f27a9546d4f73640b7f86c24bac6 [49ac8a6]
+父级： e5ebde454e
+作者： Copilot <198982749+Copilot@users.noreply.github.com>
+日期： 2026年4月18日 2:12:02
+提交者： GitHub
+标签详情 v2.2.6
+chore: upgrade version to 2.2.6 (#1944)
+
+Agent-Logs-Url: https://github.com/78/xiaozhi-esp32/sessions/d669edcb-2b68-4b41-81d6-b542a11b92e9
+
+Co-authored-by: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>
+Co-authored-by: 78 <4488133+78@users.noreply.github.com>
+
+------------------------------------------------------------------------------------------------------------------------------------
+
 # An MCP-based Chatbot
 
 (English | [中文](README_zh.md) | [日本語](README_ja.md))
