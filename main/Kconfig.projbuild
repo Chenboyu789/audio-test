@@ -816,6 +816,13 @@ config USE_DEVICE_AEC
     help
         To work properly, device-side AEC requires a clean output reference path from the speaker signal and physical acoustic isolation between the microphone and speaker.
 
+config USE_SOUND_SOURCE_LOCALIZATION
+    bool "Enable Sound Source Localization"
+    default y if BOARD_TYPE_HEAD
+    depends on BOARD_TYPE_HEAD && USE_AUDIO_PROCESSOR
+    help
+        Estimate the sound direction with the two microphones on the Head board.
+
 config USE_SERVER_AEC
     bool "Enable Server-Side AEC (Unstable)"
     default n

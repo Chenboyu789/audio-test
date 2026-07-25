@@ -1,6 +1,6 @@
 # audio-test
 ai小智 实时聊天+声源定位 同时启用
-板子选择:aevibot-head
+板子选择:head
 
 使用的代码版本:
 提交： 49ac8a6da399f27a9546d4f73640b7f86c24bac6 [49ac8a6]

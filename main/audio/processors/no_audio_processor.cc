@@ -14,9 +14,10 @@ void NoAudioProcessor::Feed(std::vector<int16_t>&& data) {
         return;
     }
 
-    // Convert stereo to mono if needed
-    if (codec_->input_channels() == 2) {
-        for (size_t i = 0, j = 0; i < data.size() / 2; ++i, j += 2) {
+    // Use the first microphone channel when input is interleaved.
+    if (codec_->input_channels() > 1) {
+        auto channels = codec_->input_channels();
+        for (size_t i = 0, j = 0; i < data.size() / channels; ++i, j += channels) {
             output_buffer_.push_back(data[j]);
         }
     } else {

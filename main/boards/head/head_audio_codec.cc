@@ -13,7 +13,7 @@ HeadAudioCodec::HeadAudioCodec(
     uint8_t es7210_addr) {
     duplex_ = true;
     input_reference_ = true;
-    input_channels_ = 2;
+    input_channels_ = 3;
     input_sample_rate_ = input_sample_rate;
     output_sample_rate_ = output_sample_rate;
     input_gain_ = 30;
@@ -64,7 +64,8 @@ HeadAudioCodec::HeadAudioCodec(
 
     es7210_codec_cfg_t es7210_cfg = {};
     es7210_cfg.ctrl_if = in_ctrl_if_;
-    es7210_cfg.mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC3;
+    es7210_cfg.mic_selected =
+        ES7210_SEL_MIC1 | ES7210_SEL_MIC2 | ES7210_SEL_MIC3;
     in_codec_if_ = es7210_codec_new(&es7210_cfg);
     assert(in_codec_if_ != nullptr);
 
@@ -73,7 +74,7 @@ HeadAudioCodec::HeadAudioCodec(
     input_dev_ = esp_codec_dev_new(&dev_cfg);
     assert(input_dev_ != nullptr);
 
-    ESP_LOGI(TAG, "Initialized with MIC1 as microphone and MIC3 as AEC reference");
+    ESP_LOGI(TAG, "Initialized with MIC1/MIC2 as microphones and MIC3 as AEC reference");
 }
 
 HeadAudioCodec::~HeadAudioCodec() {
@@ -155,7 +156,7 @@ void HeadAudioCodec::CreateDuplexChannels(
             .slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO,
             .slot_mode = I2S_SLOT_MODE_STEREO,
             .slot_mask = static_cast<i2s_tdm_slot_mask_t>(
-                I2S_TDM_SLOT0 | I2S_TDM_SLOT2),
+                I2S_TDM_SLOT0 | I2S_TDM_SLOT1 | I2S_TDM_SLOT2),
             .ws_width = I2S_TDM_AUTO_WS_WIDTH,
             .ws_pol = false,
             .bit_shift = true,
@@ -201,13 +202,17 @@ void HeadAudioCodec::EnableInput(bool enable) {
             .channel = 4,
             .channel_mask = static_cast<uint16_t>(
                 ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0) |
+                ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1) |
                 ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2)),
             .sample_rate = static_cast<uint32_t>(input_sample_rate_),
             .mclk_multiple = 0,
         };
         ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
         ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(
-            input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), input_gain_));
+            input_dev_,
+            ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0) |
+                ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1),
+            input_gain_));
     } else {
         ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
     }

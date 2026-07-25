@@ -154,9 +154,10 @@ void CustomWakeWord::Feed(const std::vector<int16_t>& data) {
         return;
     }
 
-    // If input channels is 2, we need to fetch the left channel data
-    if (codec_->input_channels() == 2) {
-        for (size_t i = 0; i < data.size(); i += 2) {
+    // Custom wake word detection uses the first microphone channel.
+    if (codec_->input_channels() > 1) {
+        auto channels = codec_->input_channels();
+        for (size_t i = 0; i < data.size(); i += channels) {
             input_buffer_.push_back(data[i]);
         }
     } else {
