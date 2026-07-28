@@ -8,8 +8,10 @@
 #include <esp_check.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 #include <freertos/task.h>
 
+#include <cmath>
 #include <memory>
 #include <new>
 
@@ -20,6 +22,13 @@ private:
     i2c_master_bus_handle_t codec_i2c_bus_ = nullptr;
     i2c_master_bus_handle_t servo_i2c_bus_ = nullptr;
     std::unique_ptr<Pca9685> pca9685_;
+    QueueHandle_t servo_target_queue_ = nullptr;
+    TaskHandle_t servo_task_ = nullptr;
+    float last_servo_angle_deg_ = SERVO_CENTER_DEG;
+    TickType_t last_servo_attempt_tick_ = 0;
+    static constexpr float kServoStepDegrees =
+        SERVO_TRACKING_MAX_SPEED_DEG_PER_SEC *
+        SERVO_TRACKING_MIN_INTERVAL_MS / 1000.0f;
 
     esp_err_t InitializeServoPower() {
         ESP_RETURN_ON_ERROR(gpio_set_level(PCA9685_POWER_ENABLE_PIN, 1), TAG,
@@ -54,20 +63,139 @@ private:
         ESP_ERROR_CHECK(i2c_new_master_bus(&config, &codec_i2c_bus_));
     }
 
-    esp_err_t RunServoTest() {
-        static constexpr float kTestAngles[] = {0.0f, 90.0f, 180.0f, 90.0f};
-        for (size_t i = 0; i < sizeof(kTestAngles) / sizeof(kTestAngles[0]); ++i) {
-            esp_err_t err = pca9685_->SetAngle(PCA9685_TEST_CHANNEL, kTestAngles[i]);
+    esp_err_t MoveServoAtConfiguredSpeed(float& current_angle_deg,
+                                         float target_angle_deg) {
+        while (std::fabs(target_angle_deg - current_angle_deg) > 0.01f) {
+            const float angle_delta = target_angle_deg - current_angle_deg;
+            const float step_degrees = std::copysign(
+                std::fmin(std::fabs(angle_delta), kServoStepDegrees),
+                angle_delta);
+            const float next_angle_deg = current_angle_deg + step_degrees;
+
+            esp_err_t err =
+                pca9685_->SetAngle(PCA9685_TEST_CHANNEL, next_angle_deg);
             if (err != ESP_OK) {
                 return err;
             }
-            ESP_LOGI(TAG, "PCA9685 CH%d test angle: %.0f degrees",
-                     PCA9685_TEST_CHANNEL, kTestAngles[i]);
-            if (i + 1 < sizeof(kTestAngles) / sizeof(kTestAngles[0])) {
-                vTaskDelay(pdMS_TO_TICKS(800));
+
+            current_angle_deg = next_angle_deg;
+            ESP_LOGI(TAG, "PCA9685 CH%d startup angle: %.1f degrees",
+                     PCA9685_TEST_CHANNEL, current_angle_deg);
+            vTaskDelay(pdMS_TO_TICKS(SERVO_TRACKING_MIN_INTERVAL_MS) + 1);
+        }
+        return ESP_OK;
+    }
+
+    esp_err_t RunServoTest() {
+        ESP_RETURN_ON_ERROR(
+            pca9685_->SetAngle(PCA9685_TEST_CHANNEL, SERVO_CENTER_DEG), TAG,
+            "failed to set startup center angle");
+        ESP_LOGI(TAG, "PCA9685 CH%d startup center: %.1f degrees",
+                 PCA9685_TEST_CHANNEL, SERVO_CENTER_DEG);
+        vTaskDelay(pdMS_TO_TICKS(SERVO_STARTUP_CENTER_SETTLE_MS));
+
+        float current_angle_deg = SERVO_CENTER_DEG;
+        static constexpr float kTestAngles[] = {
+            SERVO_LEFT_LIMIT_DEG,
+            SERVO_CENTER_DEG,
+            SERVO_RIGHT_LIMIT_DEG,
+            SERVO_CENTER_DEG,
+        };
+        for (size_t i = 0; i < sizeof(kTestAngles) / sizeof(kTestAngles[0]); ++i) {
+            esp_err_t err =
+                MoveServoAtConfiguredSpeed(current_angle_deg, kTestAngles[i]);
+            if (err != ESP_OK) {
+                return err;
             }
         }
         return ESP_OK;
+    }
+
+    static void ServoTaskEntry(void* arg) {
+        static_cast<HeadBoard*>(arg)->ServoTaskLoop();
+    }
+
+    void ServoTaskLoop() {
+        float target_angle_deg = SERVO_CENTER_DEG;
+        const TickType_t minimum_interval =
+            pdMS_TO_TICKS(SERVO_TRACKING_MIN_INTERVAL_MS) + 1;
+
+        while (true) {
+            if (xQueueReceive(servo_target_queue_, &target_angle_deg, portMAX_DELAY) !=
+                pdTRUE) {
+                continue;
+            }
+
+            while (true) {
+                float latest_angle_deg = target_angle_deg;
+                while (xQueueReceive(servo_target_queue_, &latest_angle_deg, 0) ==
+                       pdTRUE) {
+                    target_angle_deg = latest_angle_deg;
+                }
+
+                float angle_delta = target_angle_deg - last_servo_angle_deg_;
+                if (std::fabs(angle_delta) < SERVO_TRACKING_DEADBAND_DEG) {
+                    break;
+                }
+
+                const TickType_t now = xTaskGetTickCount();
+                const TickType_t elapsed = now - last_servo_attempt_tick_;
+                if (elapsed < minimum_interval) {
+                    if (xQueueReceive(servo_target_queue_, &latest_angle_deg,
+                                      minimum_interval - elapsed) == pdTRUE) {
+                        target_angle_deg = latest_angle_deg;
+                        continue;
+                    }
+                }
+
+                while (xQueueReceive(servo_target_queue_, &latest_angle_deg, 0) ==
+                       pdTRUE) {
+                    target_angle_deg = latest_angle_deg;
+                }
+                angle_delta = target_angle_deg - last_servo_angle_deg_;
+                if (std::fabs(angle_delta) < SERVO_TRACKING_DEADBAND_DEG) {
+                    break;
+                }
+
+                const float step_degrees = std::copysign(
+                    std::fmin(std::fabs(angle_delta), kServoStepDegrees),
+                    angle_delta);
+                const float next_angle_deg =
+                    last_servo_angle_deg_ + step_degrees;
+
+                last_servo_attempt_tick_ = xTaskGetTickCount();
+                esp_err_t err =
+                    pca9685_->SetAngle(PCA9685_TEST_CHANNEL, next_angle_deg);
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to track servo angle %.1f: %s",
+                             next_angle_deg, esp_err_to_name(err));
+                    break;
+                }
+
+                last_servo_angle_deg_ = next_angle_deg;
+                ESP_LOGI(TAG, "Servo tracking angle: %.1f degrees",
+                         next_angle_deg);
+            }
+        }
+    }
+
+    void StartServoTracking() {
+        servo_target_queue_ = xQueueCreate(1, sizeof(float));
+        if (servo_target_queue_ == nullptr) {
+            ESP_LOGE(TAG, "Failed to create servo target queue");
+            return;
+        }
+
+        BaseType_t task_created = xTaskCreate(
+            ServoTaskEntry, "head_servo", 3072, this, 2, &servo_task_);
+        if (task_created != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create servo tracking task");
+            vQueueDelete(servo_target_queue_);
+            servo_target_queue_ = nullptr;
+            servo_task_ = nullptr;
+            return;
+        }
+        ESP_LOGI(TAG, "Servo sound tracking started");
     }
 
     void InitializeServo() {
@@ -116,7 +244,10 @@ private:
                      PCA9685_TEST_CHANNEL, esp_err_to_name(err));
             return;
         }
+        last_servo_angle_deg_ = SERVO_CENTER_DEG;
+        last_servo_attempt_tick_ = xTaskGetTickCount();
         ESP_LOGI(TAG, "PCA9685 CH%d test completed", PCA9685_TEST_CHANNEL);
+        StartServoTracking();
     }
 
 public:
@@ -131,6 +262,26 @@ public:
             InitializeServo();
         }
         ESP_LOGI(TAG, "Head board initialized");
+    }
+
+    void OnSoundDirection(float angle_deg, float confidence) override {
+        (void)confidence;
+        if (servo_target_queue_ == nullptr || !std::isfinite(angle_deg)) {
+            return;
+        }
+
+        const float clamped_sound_angle =
+            std::fmax(-90.0f, std::fmin(90.0f, angle_deg));
+        const float mapped_angle = clamped_sound_angle < 0.0f
+            ? SERVO_CENTER_DEG +
+                clamped_sound_angle *
+                    (SERVO_CENTER_DEG - SERVO_LEFT_LIMIT_DEG) / 90.0f
+            : SERVO_CENTER_DEG +
+                clamped_sound_angle *
+                    (SERVO_RIGHT_LIMIT_DEG - SERVO_CENTER_DEG) / 90.0f;
+        const float target_angle = std::fmax(
+            SERVO_LEFT_LIMIT_DEG, std::fmin(SERVO_RIGHT_LIMIT_DEG, mapped_angle));
+        xQueueOverwrite(servo_target_queue_, &target_angle);
     }
 
     AudioCodec* GetAudioCodec() override {
