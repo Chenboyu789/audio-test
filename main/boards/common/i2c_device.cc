@@ -6,6 +6,10 @@
 
 
 I2cDevice::I2cDevice(i2c_master_bus_handle_t i2c_bus, uint8_t addr) {
+    ESP_ERROR_CHECK(InitializeI2cDevice(i2c_bus, addr));
+}
+
+esp_err_t I2cDevice::InitializeI2cDevice(i2c_master_bus_handle_t i2c_bus, uint8_t addr) {
     i2c_device_config_t i2c_device_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = addr,
@@ -15,8 +19,7 @@ I2cDevice::I2cDevice(i2c_master_bus_handle_t i2c_bus, uint8_t addr) {
             .disable_ack_check = 0,
         },
     };
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus, &i2c_device_cfg, &i2c_device_));
-    assert(i2c_device_ != NULL);
+    return i2c_master_bus_add_device(i2c_bus, &i2c_device_cfg, &i2c_device_);
 }
 
 void I2cDevice::WriteReg(uint8_t reg, uint8_t value) {
