@@ -2,49 +2,69 @@
 #define SOUND_SOURCE_LOCATOR_H
 
 #include <array>
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <mutex>
 #include <vector>
 
-#include <esp_afe_doa.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
+
+struct SoundDirectionResult {
+    float angle_deg;
+    float confidence;
+};
 
 class SoundSourceLocator {
 public:
-    SoundSourceLocator(const char* input_format, int sample_rate,
-        float resolution_degrees, float microphone_distance_m,
-        int window_samples, float minimum_rms);
+    using DirectionCallback = std::function<void(const SoundDirectionResult&)>;
+
+    SoundSourceLocator(int input_channels, DirectionCallback callback);
     ~SoundSourceLocator();
 
-    SoundSourceLocator(const SoundSourceLocator&) = delete;
-    SoundSourceLocator& operator=(const SoundSourceLocator&) = delete;
-
     bool IsReady() const;
-    void Feed(const std::vector<int16_t>& data, bool playback_active);
-    void Reset();
-    void OnDirection(std::function<void(float)> callback);
+    void Feed(const std::vector<int16_t>& interleaved, bool playback_active);
 
 private:
-    static constexpr int kInputChannels = 3;
-    static constexpr int64_t kLogIntervalUs = 250000;
+    static constexpr size_t kFrameSamples = 1024;
+    static constexpr size_t kChunkSamples = 160;
+    static constexpr size_t kAngleHistorySize = 5;
 
-    afe_doa_handle_t* doa_ = nullptr;
-    int window_samples_;
-    float minimum_rms_;
-    std::vector<int16_t> input_buffer_;
-    std::array<float, 3> angle_history_ = {};
+    struct StereoChunk {
+        uint16_t samples = 0;
+        std::array<int16_t, kChunkSamples> left{};
+        std::array<int16_t, kChunkSamples> right{};
+    };
+
+    static void TaskEntry(void* arg);
+    void TaskLoop();
+    void ProcessFrame();
+    float SmoothAngle(float angle);
+
+    int input_channels_;
+    DirectionCallback callback_;
+    void* doa_ = nullptr;
+    QueueHandle_t queue_ = nullptr;
+    SemaphoreHandle_t task_exited_ = nullptr;
+    TaskHandle_t task_ = nullptr;
+    std::atomic<bool> running_{false};
+    std::atomic<bool> playback_active_{false};
+    std::atomic<bool> reset_requested_{false};
+
+    std::array<int16_t, kFrameSamples> left_frame_{};
+    std::array<int16_t, kFrameSamples> right_frame_{};
+    size_t frame_samples_ = 0;
+    float noise_floor_rms_ = 100.0f;
+    int noise_calibration_frames_ = 0;
+    int consecutive_speech_frames_ = 0;
+    std::array<float, kAngleHistorySize> angle_history_{};
     size_t angle_history_count_ = 0;
-    size_t angle_history_position_ = 0;
-    float smoothed_angle_ = 0.0f;
-    bool has_smoothed_angle_ = false;
-    bool playback_active_ = false;
-    bool invalid_input_logged_ = false;
-    int64_t last_log_time_us_ = 0;
-    std::mutex mutex_;
-    std::function<void(float)> direction_callback_;
-
-    bool HasEnoughEnergy(const int16_t* frame) const;
-    float ConvertAndSmooth(float raw_angle);
+    size_t angle_history_index_ = 0;
+    float filtered_angle_ = 0.0f;
+    bool has_filtered_angle_ = false;
 };
 
-#endif  // SOUND_SOURCE_LOCATOR_H
+#endif

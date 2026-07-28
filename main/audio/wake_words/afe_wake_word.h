@@ -43,6 +43,9 @@ private:
     EventGroupHandle_t event_group_;
     std::function<void(const std::string& wake_word)> wake_word_detected_callback_;
     AudioCodec* codec_ = nullptr;
+    int source_channels_ = 0;
+    int processor_channels_ = 0;
+    int reference_channel_ = -1;
     std::string last_detected_wake_word_;
     std::vector<int16_t> input_buffer_;
     std::mutex input_buffer_mutex_;

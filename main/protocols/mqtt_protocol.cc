@@ -3,6 +3,7 @@
 #include "application.h"
 #include "settings.h"
 
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <cstring>
 #include <arpa/inet.h>
@@ -186,7 +187,33 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
         return false;
     }
 
-    return udp_->Send(encrypted) > 0;
+    const int send_result = udp_->Send(encrypted);
+    if (send_result <= 0) {
+        static int64_t last_diagnostic_time_us = 0;
+        const int64_t now_us = esp_timer_get_time();
+        if (now_us - last_diagnostic_time_us >= 1000000) {
+            last_diagnostic_time_us = now_us;
+            ESP_LOGW(TAG,
+                "Audio UDP diagnostics: opus=%u encrypted=%u, "
+                "internal_free=%u internal_largest=%u internal_min=%u, "
+                "dma_free=%u dma_largest=%u",
+                static_cast<unsigned>(packet->payload.size()),
+                static_cast<unsigned>(encrypted.size()),
+                static_cast<unsigned>(
+                    heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(
+                    heap_caps_get_largest_free_block(
+                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(
+                    heap_caps_get_minimum_free_size(
+                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_DMA)),
+                static_cast<unsigned>(
+                    heap_caps_get_largest_free_block(MALLOC_CAP_DMA)));
+        }
+        return false;
+    }
+    return true;
 }
 
 void MqttProtocol::CloseAudioChannel(bool send_goodbye) {

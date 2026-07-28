@@ -37,7 +37,15 @@ AfeWakeWord::~AfeWakeWord() {
 
 bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     codec_ = codec;
-    int ref_num = codec_->input_reference() ? 1 : 0;
+    const int ref_num = codec_->input_reference() ? 1 : 0;
+    source_channels_ = codec_->input_channels();
+    processor_channels_ = 1 + ref_num;
+    reference_channel_ = ref_num > 0 ? source_channels_ - 1 : -1;
+#if CONFIG_BOARD_TYPE_HEAD
+    if (ref_num > 0 && source_channels_ == 3) {
+        reference_channel_ = 1;
+    }
+#endif
 
     if (models_list == nullptr) {
         models_ = esp_srmodel_init("model");
@@ -63,12 +71,18 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
         }
     }
 
-    std::string input_format;
-    for (int i = 0; i < codec_->input_channels() - ref_num; i++) {
-        input_format.push_back('M');
-    }
-    for (int i = 0; i < ref_num; i++) {
+    // Use MIC1 only for wake-word detection. The head board's MIC2 may be
+    // unavailable, and feeding a silent second microphone into BSS prevents
+    // reliable wake-up. Keep the final channel as the AEC reference.
+    std::string input_format = "M";
+    if (ref_num > 0) {
         input_format.push_back('R');
+    }
+    if (source_channels_ != processor_channels_) {
+        ESP_LOGI(TAG,
+            "Converting %d-channel codec input to %s for wake word "
+            "(mic=0, ref=%d)",
+            source_channels_, input_format.c_str(), reference_channel_);
     }
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), models_, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
     afe_config->aec_init = codec_->input_reference();
@@ -117,8 +131,22 @@ void AfeWakeWord::Feed(const std::vector<int16_t>& data) {
     if (!(xEventGroupGetBits(event_group_) & DETECTION_RUNNING_EVENT)) {
         return;
     }
-    input_buffer_.insert(input_buffer_.end(), data.begin(), data.end());
-    size_t chunk_size = afe_iface_->get_feed_chunksize(afe_data_) * codec_->input_channels();
+    if (source_channels_ == processor_channels_) {
+        input_buffer_.insert(input_buffer_.end(), data.begin(), data.end());
+    } else {
+        const size_t frames = data.size() / source_channels_;
+        input_buffer_.reserve(input_buffer_.size() + frames * processor_channels_);
+        for (size_t frame = 0; frame < frames; ++frame) {
+            const size_t source_offset = frame * source_channels_;
+            input_buffer_.push_back(data[source_offset]);
+            if (processor_channels_ == 2) {
+                input_buffer_.push_back(
+                    data[source_offset + reference_channel_]);
+            }
+        }
+    }
+    const size_t chunk_size =
+        afe_iface_->get_feed_chunksize(afe_data_) * processor_channels_;
     while (input_buffer_.size() >= chunk_size) {
         afe_iface_->feed(afe_data_, input_buffer_.data());
         input_buffer_.erase(input_buffer_.begin(), input_buffer_.begin() + chunk_size);

@@ -13,8 +13,7 @@
 - Codec：ES8311 默认地址、ES7210 默认地址
 - Boot 按键：GPIO0
 - 显示屏、LED：无
-- ES7210 MIC1：主语音输入
-- ES7210 MIC2：本版本不启用
+- ES7210 MIC1/MIC2：间距 45 mm 的左右语音麦克风，同时用于声源定位
 - ES7210 MIC3：连接 ES8311 OUTP/OUTN，作为 AEC 播放回采参考
 
 输入和输出采样率均为 24 kHz。
@@ -27,10 +26,11 @@
 
 板级专用 Codec 复用项目现有 ES8311、ES7210 和 I2S 驱动模式，但明确限定 ES7210 输入：
 
-- 仅启用 MIC1 和 MIC3；
-- 从 TDM 输入中选择 MIC1 作为麦克风通道；
-- 选择 MIC3 作为回采参考通道；
-- 对上层暴露交错的两通道“麦克风 + 参考”数据，以匹配 AFE 的 `MR` 输入格式。
+- 启用 MIC1、MIC2 和 MIC3；
+- ES7210 TDM 数据按 `MIC1、MIC3参考、MIC2`（`MRM`）排列；
+- 唤醒和对话提取通道 0/1，以 `MR` 格式送入单麦 AFE；
+- 定位提取通道 0/2，并将极性相反的 MIC2 软件反相后送入 ESP-SR
+  SRP-PHAT，输出左负右正的 `-90°～+90°` 声源方向；播放期间暂停结果。
 
 采用板级专用 Codec，避免改变公共 `BoxAudioCodec` 的默认通道假设，从而不影响现有开发板。
 
@@ -42,7 +42,8 @@
 
 `main/boards/head/config.json` 使用 `esp32s3` 目标，构建名称为 `head`，配置 16 MB Flash、16 MB 分区表和 `CONFIG_USE_DEVICE_AEC=y`。项目的 ESP32-S3 默认配置已经启用 8 MB Octal PSRAM。
 
-MIC1/MIC3 使用非连续的 TDM slot 0/2。项目最低使用 ESP Codec Dev 1.5.11，以确保全双工模式下该稀疏 RX 掩码不会被错误应用到 STD TX。
+MIC1/MIC2/MIC3 使用 TDM slot 0/1/2。项目最低使用 ESP Codec Dev 1.5.11，
+以确保全双工模式下 RX 掩码不会被错误应用到 STD TX。
 
 ## 交互
 
@@ -62,12 +63,13 @@ I2C、I2S 和 Codec 初始化沿用项目现有的 `ESP_ERROR_CHECK`/断言策�
 2. 编译：使用 `python scripts/release.py head` 完成 ESP32-S3 发布构建。
 3. 静态检查：确认编译命令包含 `BOARD_TYPE="head"`，且 AEC 音频处理器被编入。
 4. 硬件启动：确认 ES8311、ES7210 均能在 I2C 总线上初始化。
-5. 音频：确认扬声器播放正常，采集主通道来自 MIC1，MIC2 不进入数据流。
+5. 音频：确认扬声器播放正常，输入通道依次为 MIC1、MIC3、MIC2。
 6. AEC：播放 TTS 时确认参考通道来自 MIC3，并比较启用/关闭 AEC 时的回声抑制效果。
 7. 按键：确认 Boot 单击和双击行为符合设计。
+8. 定位：在正前方 ±60° 范围内验证定位误差不超过 ±15°，播放期间无新结果。
 
 ## 不在本次范围
 
-- 双麦克风波束成形或 MIC1/MIC2 混音
+- 双麦克风波束成形或 MIC1/MIC2 混音（定位仅旁路读取，不修改对话音频）
 - 显示屏、LED 或其他 UI 外设
 - 修改公共 `BoxAudioCodec` 的通道行为

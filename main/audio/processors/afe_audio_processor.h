@@ -37,6 +37,9 @@ private:
     std::function<void(bool speaking)> vad_state_change_callback_;
     AudioCodec* codec_ = nullptr;
     int frame_samples_ = 0;
+    int source_channels_ = 0;
+    int processor_channels_ = 0;
+    int reference_channel_ = -1;
     bool is_speaking_ = false;
     std::vector<int16_t> input_buffer_;
     std::mutex input_buffer_mutex_;

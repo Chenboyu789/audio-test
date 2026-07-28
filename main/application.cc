@@ -83,6 +83,17 @@ void Application::Initialize() {
     callbacks.on_vad_change = [this](bool speaking) {
         xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
     };
+#if CONFIG_USE_SOUND_SOURCE_LOCALIZATION
+    callbacks.on_sound_direction = [](const SoundDirectionResult& result) {
+        static int64_t last_log_time_us = 0;
+        const int64_t now_us = esp_timer_get_time();
+        if (now_us - last_log_time_us >= 500000) {
+            ESP_LOGI(TAG, "Sound direction: %.1f degrees, confidence: %.2f",
+                result.angle_deg, result.confidence);
+            last_log_time_us = now_us;
+        }
+    };
+#endif
     audio_service_.SetCallbacks(callbacks);
 
     // Add state change listeners
@@ -220,6 +231,7 @@ void Application::Run() {
         if (bits & MAIN_EVENT_SEND_AUDIO) {
             while (auto packet = audio_service_.PopPacketFromSendQueue()) {
                 if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
+                    audio_service_.LogQueueDiagnostics();
                     break;
                 }
             }

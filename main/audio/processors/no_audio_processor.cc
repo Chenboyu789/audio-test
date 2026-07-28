@@ -15,8 +15,8 @@ void NoAudioProcessor::Feed(std::vector<int16_t>&& data) {
     }
 
     // Use the first microphone channel when input is interleaved.
-    if (codec_->input_channels() > 1) {
-        auto channels = codec_->input_channels();
+    const int channels = codec_->input_channels();
+    if (channels > 1) {
         for (size_t i = 0, j = 0; i < data.size() / channels; ++i, j += channels) {
             output_buffer_.push_back(data[j]);
         }

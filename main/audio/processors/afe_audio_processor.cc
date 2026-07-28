@@ -17,14 +17,27 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     // Pre-allocate output buffer capacity
     output_buffer_.reserve(frame_samples_);
 
-    int ref_num = codec_->input_reference() ? 1 : 0;
-
-    std::string input_format;
-    for (int i = 0; i < codec_->input_channels() - ref_num; i++) {
-        input_format.push_back('M');
+    const int ref_num = codec_->input_reference() ? 1 : 0;
+    source_channels_ = codec_->input_channels();
+    processor_channels_ = 1 + ref_num;
+    reference_channel_ = ref_num > 0 ? source_channels_ - 1 : -1;
+#if CONFIG_BOARD_TYPE_HEAD
+    if (ref_num > 0 && source_channels_ == 3) {
+        reference_channel_ = 1;
     }
-    for (int i = 0; i < ref_num; i++) {
+#endif
+
+    // AFE_TYPE_VC supports one microphone channel only. Keep the first
+    // microphone and, when present, the final playback-reference channel.
+    std::string input_format = "M";
+    if (ref_num > 0) {
         input_format.push_back('R');
+    }
+    if (source_channels_ != processor_channels_) {
+        ESP_LOGI(TAG,
+            "Converting %d-channel codec input to %s for voice communication "
+            "(mic=0, ref=%d)",
+            source_channels_, input_format.c_str(), reference_channel_);
     }
 
     srmodel_list_t *models;
@@ -98,8 +111,22 @@ void AfeAudioProcessor::Feed(std::vector<int16_t>&& data) {
     if (!IsRunning()) {
         return;
     }
-    input_buffer_.insert(input_buffer_.end(), data.begin(), data.end());
-    size_t chunk_size = afe_iface_->get_feed_chunksize(afe_data_) * codec_->input_channels();
+    if (source_channels_ == processor_channels_) {
+        input_buffer_.insert(input_buffer_.end(), data.begin(), data.end());
+    } else {
+        const size_t frames = data.size() / source_channels_;
+        input_buffer_.reserve(input_buffer_.size() + frames * processor_channels_);
+        for (size_t frame = 0; frame < frames; ++frame) {
+            const size_t source_offset = frame * source_channels_;
+            input_buffer_.push_back(data[source_offset]);
+            if (processor_channels_ == 2) {
+                input_buffer_.push_back(
+                    data[source_offset + reference_channel_]);
+            }
+        }
+    }
+    const size_t chunk_size =
+        afe_iface_->get_feed_chunksize(afe_data_) * processor_channels_;
     while (input_buffer_.size() >= chunk_size) {
         afe_iface_->feed(afe_data_, input_buffer_.data());
         input_buffer_.erase(input_buffer_.begin(), input_buffer_.begin() + chunk_size);

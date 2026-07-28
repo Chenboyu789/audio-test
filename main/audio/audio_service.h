@@ -1,7 +1,6 @@
 #ifndef AUDIO_SERVICE_H
 #define AUDIO_SERVICE_H
 
-#include <atomic>
 #include <memory>
 #include <deque>
 #include <condition_variable>
@@ -55,9 +54,6 @@
 #define AS_EVENT_WAKE_WORD_RUNNING          (1 << 1)
 #define AS_EVENT_AUDIO_PROCESSOR_RUNNING    (1 << 2)
 #define AS_EVENT_PLAYBACK_NOT_EMPTY         (1 << 3)
-#define AS_EVENT_AUDIO_INPUT_STOPPED         (1 << 4)
-#define AS_EVENT_AUDIO_OUTPUT_STOPPED        (1 << 5)
-#define AS_EVENT_OPUS_CODEC_STOPPED          (1 << 6)
 
 #define AS_OPUS_GET_FRAME_DRU_ENUM(duration_ms)                   \
     ((duration_ms) == 5 ? ESP_OPUS_ENC_FRAME_DURATION_5_MS :      \
@@ -83,13 +79,13 @@
     }
 
 struct AudioServiceCallbacks {
-    // Callbacks run on AudioService worker tasks. They must not call Start() or
-    // Stop() directly; dispatch lifecycle changes to the application task.
     std::function<void(void)> on_send_queue_available;
     std::function<void(const std::string&)> on_wake_word_detected;
     std::function<void(bool)> on_vad_change;
-    std::function<void(float)> on_sound_direction_change;
     std::function<void(void)> on_audio_testing_queue_full;
+#if CONFIG_USE_SOUND_SOURCE_LOCALIZATION
+    std::function<void(const SoundDirectionResult&)> on_sound_direction;
+#endif
 };
 
 
@@ -139,6 +135,7 @@ public:
 
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
+    void LogQueueDiagnostics();
     void PlaySound(const std::string_view& sound);
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
@@ -148,11 +145,11 @@ private:
     AudioCodec* codec_ = nullptr;
     AudioServiceCallbacks callbacks_;
     std::unique_ptr<AudioProcessor> audio_processor_;
+    std::unique_ptr<WakeWord> wake_word_;
+    std::unique_ptr<AudioDebugger> audio_debugger_;
 #if CONFIG_USE_SOUND_SOURCE_LOCALIZATION
     std::unique_ptr<SoundSourceLocator> sound_source_locator_;
 #endif
-    std::unique_ptr<WakeWord> wake_word_;
-    std::unique_ptr<AudioDebugger> audio_debugger_;
     void* opus_encoder_ = nullptr;
     void* opus_decoder_ = nullptr;
     std::mutex decoder_mutex_;
@@ -184,8 +181,8 @@ private:
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_testing_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_encode_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_playback_queue_;
-    bool audio_decode_in_progress_ = false;
-    bool audio_output_in_progress_ = false;
+    bool decode_in_progress_ = false;
+    bool output_in_progress_ = false;
     uint32_t decoder_generation_ = 0;
     // For server AEC
     std::deque<uint32_t> timestamp_queue_;
@@ -193,7 +190,7 @@ private:
     bool wake_word_initialized_ = false;
     bool audio_processor_initialized_ = false;
     bool voice_detected_ = false;
-    std::atomic<bool> service_stopped_{true};
+    bool service_stopped_ = true;
     bool audio_input_need_warmup_ = false;
 
     esp_timer_handle_t audio_power_timer_ = nullptr;

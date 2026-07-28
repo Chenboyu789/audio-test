@@ -41,9 +41,9 @@ namespace audio_wifi_config
                 continue;
             }
 
-            if (input_channels == 2) { // 如果是双声道输入，转换为单声道
-                auto mono_data = std::vector<int16_t>(audio_data.size() / 2);
-                for (size_t i = 0, j = 0; i < mono_data.size(); ++i, j += 2) {
+            if (input_channels > 1) { // 多声道输入统一提取第一个麦克风通道
+                auto mono_data = std::vector<int16_t>(audio_data.size() / input_channels);
+                for (size_t i = 0, j = 0; i < mono_data.size(); ++i, j += input_channels) {
                     mono_data[i] = audio_data[j];
                 }
                 audio_data = std::move(mono_data);

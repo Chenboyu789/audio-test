@@ -70,8 +70,9 @@ void EspWakeWord::Feed(const std::vector<int16_t>& data) {
         return;
     }
 
-    if (codec_->input_channels() == 2) {
-        for (size_t i = 0; i < data.size(); i += 2) {
+    const int channels = codec_->input_channels();
+    if (channels > 1) {
+        for (size_t i = 0; i < data.size(); i += channels) {
             input_buffer_.push_back(data[i]);
         }
     } else {
