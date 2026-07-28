@@ -25,6 +25,7 @@ private:
     QueueHandle_t servo_target_queue_ = nullptr;
     TaskHandle_t servo_task_ = nullptr;
     float last_servo_angle_deg_ = SERVO_CENTER_DEG;
+    bool servo_position_known_ = false;
     TickType_t last_servo_attempt_tick_ = 0;
     static constexpr float kServoStepDegrees =
         SERVO_TRACKING_MAX_SPEED_DEG_PER_SEC *
@@ -63,54 +64,6 @@ private:
         ESP_ERROR_CHECK(i2c_new_master_bus(&config, &codec_i2c_bus_));
     }
 
-    esp_err_t MoveServoAtConfiguredSpeed(float& current_angle_deg,
-                                         float target_angle_deg) {
-        while (std::fabs(target_angle_deg - current_angle_deg) > 0.01f) {
-            const float angle_delta = target_angle_deg - current_angle_deg;
-            const float step_degrees = std::copysign(
-                std::fmin(std::fabs(angle_delta), kServoStepDegrees),
-                angle_delta);
-            const float next_angle_deg = current_angle_deg + step_degrees;
-
-            esp_err_t err =
-                pca9685_->SetAngle(PCA9685_TEST_CHANNEL, next_angle_deg);
-            if (err != ESP_OK) {
-                return err;
-            }
-
-            current_angle_deg = next_angle_deg;
-            ESP_LOGI(TAG, "PCA9685 CH%d startup angle: %.1f degrees",
-                     PCA9685_TEST_CHANNEL, current_angle_deg);
-            vTaskDelay(pdMS_TO_TICKS(SERVO_TRACKING_MIN_INTERVAL_MS) + 1);
-        }
-        return ESP_OK;
-    }
-
-    esp_err_t RunServoTest() {
-        ESP_RETURN_ON_ERROR(
-            pca9685_->SetAngle(PCA9685_TEST_CHANNEL, SERVO_CENTER_DEG), TAG,
-            "failed to set startup center angle");
-        ESP_LOGI(TAG, "PCA9685 CH%d startup center: %.1f degrees",
-                 PCA9685_TEST_CHANNEL, SERVO_CENTER_DEG);
-        vTaskDelay(pdMS_TO_TICKS(SERVO_STARTUP_CENTER_SETTLE_MS));
-
-        float current_angle_deg = SERVO_CENTER_DEG;
-        static constexpr float kTestAngles[] = {
-            SERVO_LEFT_LIMIT_DEG,
-            SERVO_CENTER_DEG,
-            SERVO_RIGHT_LIMIT_DEG,
-            SERVO_CENTER_DEG,
-        };
-        for (size_t i = 0; i < sizeof(kTestAngles) / sizeof(kTestAngles[0]); ++i) {
-            esp_err_t err =
-                MoveServoAtConfiguredSpeed(current_angle_deg, kTestAngles[i]);
-            if (err != ESP_OK) {
-                return err;
-            }
-        }
-        return ESP_OK;
-    }
-
     static void ServoTaskEntry(void* arg) {
         static_cast<HeadBoard*>(arg)->ServoTaskLoop();
     }
@@ -131,6 +84,34 @@ private:
                 while (xQueueReceive(servo_target_queue_, &latest_angle_deg, 0) ==
                        pdTRUE) {
                     target_angle_deg = latest_angle_deg;
+                }
+
+                if (!servo_position_known_) {
+                    const TickType_t now = xTaskGetTickCount();
+                    const TickType_t elapsed = now - last_servo_attempt_tick_;
+                    if (elapsed < minimum_interval) {
+                        if (xQueueReceive(servo_target_queue_, &latest_angle_deg,
+                                          minimum_interval - elapsed) == pdTRUE) {
+                            target_angle_deg = latest_angle_deg;
+                            continue;
+                        }
+                    }
+                    while (xQueueReceive(servo_target_queue_, &latest_angle_deg, 0) ==
+                           pdTRUE) {
+                        target_angle_deg = latest_angle_deg;
+                    }
+
+                    last_servo_attempt_tick_ = xTaskGetTickCount();
+                    esp_err_t err =
+                        pca9685_->SetAngle(SERVO_CHANNEL, target_angle_deg);
+                    if (err != ESP_OK) {
+                        ESP_LOGE(TAG, "Failed to set initial servo angle %.1f: %s",
+                                 target_angle_deg, esp_err_to_name(err));
+                        break;
+                    }
+                    last_servo_angle_deg_ = target_angle_deg;
+                    servo_position_known_ = true;
+                    break;
                 }
 
                 float angle_delta = target_angle_deg - last_servo_angle_deg_;
@@ -165,7 +146,7 @@ private:
 
                 last_servo_attempt_tick_ = xTaskGetTickCount();
                 esp_err_t err =
-                    pca9685_->SetAngle(PCA9685_TEST_CHANNEL, next_angle_deg);
+                    pca9685_->SetAngle(SERVO_CHANNEL, next_angle_deg);
                 if (err != ESP_OK) {
                     ESP_LOGE(TAG, "Failed to track servo angle %.1f: %s",
                              next_angle_deg, esp_err_to_name(err));
@@ -173,8 +154,6 @@ private:
                 }
 
                 last_servo_angle_deg_ = next_angle_deg;
-                ESP_LOGI(TAG, "Servo tracking angle: %.1f degrees",
-                         next_angle_deg);
             }
         }
     }
@@ -238,15 +217,16 @@ private:
             return;
         }
 
-        err = RunServoTest();
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "PCA9685 CH%d test failed: %s",
-                     PCA9685_TEST_CHANNEL, esp_err_to_name(err));
-            return;
-        }
-        last_servo_angle_deg_ = SERVO_CENTER_DEG;
         last_servo_attempt_tick_ = xTaskGetTickCount();
-        ESP_LOGI(TAG, "PCA9685 CH%d test completed", PCA9685_TEST_CHANNEL);
+        err = pca9685_->SetAngle(SERVO_CHANNEL, SERVO_CENTER_DEG);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to restore initial servo angle: %s",
+                     esp_err_to_name(err));
+        } else {
+            last_servo_angle_deg_ = SERVO_CENTER_DEG;
+            servo_position_known_ = true;
+            vTaskDelay(pdMS_TO_TICKS(SERVO_STARTUP_CENTER_SETTLE_MS));
+        }
         StartServoTracking();
     }
 

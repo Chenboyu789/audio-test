@@ -1,20 +1,41 @@
 # audio-test
-ai小智 实时聊天+声源定位 同时启用
-板子选择:head
 
-使用的代码版本:
-提交： 49ac8a6da399f27a9546d4f73640b7f86c24bac6 [49ac8a6]
-父级： e5ebde454e
-作者： Copilot <198982749+Copilot@users.noreply.github.com>
-日期： 2026年4月18日 2:12:02
-提交者： GitHub
-标签详情 v2.2.6
-chore: upgrade version to 2.2.6 (#1944)
+基于小智 AI ESP32 v2.2.6 定制的智慧头固件，同时支持实时语音聊天、
+设备端 AEC、双麦克风声源定位和舵机转向。
 
-Agent-Logs-Url: https://github.com/78/xiaozhi-esp32/sessions/d669edcb-2b68-4b41-81d6-b542a11b92e9
+## 项目功能
 
-Co-authored-by: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>
-Co-authored-by: 78 <4488133+78@users.noreply.github.com>
+- 使用 ESP32-S3 N16R8，构建目标为 `head`。
+- ES8311 负责音频输出，ES7210 的 MIC1/MIC2 组成左右麦克风阵列，
+  MIC3 作为 AEC 扬声器回采参考。
+- 使用 ESP-SR SRP-PHAT 计算前方 `-90°～+90°` 的声源方向：
+  左侧为负角度，正前为 0°，右侧为正角度。
+- PCA9685 CH1 驱动脖子舵机，将声源左/中/右映射为
+  `75° / 105° / 135°`。上电时恢复到中位 105°，后续声源跟随最大
+  速度为 20°/秒；上电回中因没有位置反馈，无法严格限速。
+- 播放 TTS 时暂停定位；无有效声源时舵机完成当前目标并保持角度。
+
+## PCA9685 接线
+
+- SDA：GPIO8
+- SCL：GPIO7
+- I²C 地址：`0x40`
+- 电源使能：GPIO0，低电平有效
+
+GPIO0 是 ESP32-S3 启动绑带引脚，硬件必须保证复位采样期间保持高电平。
+GPIO0 已用于 PCA9685 电源使能，因此 Head 板的按键功能已取消。
+
+## 构建
+
+```powershell
+python scripts/release.py head
+```
+
+详细硬件与验证说明见
+[`main/boards/head/README.md`](main/boards/head/README.md)。
+
+上游基线：小智 AI ESP32 `v2.2.6`，提交
+`49ac8a6da399f27a9546d4f73640b7f86c24bac6`。
 
 ------------------------------------------------------------------------------------------------------------------------------------
 

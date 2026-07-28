@@ -86,14 +86,6 @@ void Application::Initialize() {
 #if CONFIG_USE_SOUND_SOURCE_LOCALIZATION
     callbacks.on_sound_direction = [](const SoundDirectionResult& result) {
         Board::GetInstance().OnSoundDirection(result.angle_deg, result.confidence);
-
-        static int64_t last_log_time_us = 0;
-        const int64_t now_us = esp_timer_get_time();
-        if (now_us - last_log_time_us >= 500000) {
-            ESP_LOGI(TAG, "Sound direction: %.1f degrees, confidence: %.2f",
-                result.angle_deg, result.confidence);
-            last_log_time_us = now_us;
-        }
     };
 #endif
     audio_service_.SetCallbacks(callbacks);

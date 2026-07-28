@@ -26,8 +26,7 @@ need no changes.
 
 In the existing `callbacks.on_sound_direction` lambda, call
 `Board::GetInstance().OnSoundDirection(result.angle_deg, result.confidence)`
-before the existing 500 ms rate-limited log. Do not schedule or perform I2C in
-this callback.
+without scheduling or performing I2C in this callback.
 
 ### Task 2: Add Head board tracking worker
 
@@ -38,19 +37,19 @@ this callback.
 - [ ] **Step 1: Define calibrated tracking constants**
 
 Add constants for channel 1, left 75°, center 105°, right 135°, 1° output
-deadband, 200 ms minimum write interval, 15°/second maximum tracking speed,
+deadband, 200 ms minimum write interval, 20°/second maximum tracking speed,
 and a one-element target queue.
 
-- [ ] **Step 2: Make startup movement mechanically safe**
+- [ ] **Step 2: Restore the startup center position**
 
-First command CH1 to 105° and wait 2 seconds for the unknown physical startup
-position to settle. Then replace `0° → 90° → 180° → 90°` with a gradual
-`75° → 105° → 135° → 105°` sequence at 15°/second, leaving CH1 at 105°.
+Set CH1 to 105° after PCA9685 initialization and wait 2 seconds before starting
+the tracking worker. Record 105° as the known software position; subsequent
+movement is limited to 20°/second.
 
 - [ ] **Step 3: Create the queue and worker after PCA9685 initialization**
 
 Create `QueueHandle_t servo_target_queue_` with one float item. Start a
-`head_servo` task only after driver initialization and startup test succeed.
+`head_servo` task after driver initialization succeeds.
 If queue/task creation fails, log and leave localization/audio/network running.
 
 - [ ] **Step 4: Implement non-blocking event ingestion**
@@ -64,7 +63,7 @@ callback returns immediately with only the newest target.
 
 The worker blocks on the queue while settled. While moving, wait until 200 ms has
 elapsed since the previous write attempt, accepting replacement targets during
-the wait. Move at most 3° per write so the maximum tracking speed is 15°/second.
+the wait. Move at most 4° per write so the maximum tracking speed is 20°/second.
 Skip remaining movement below 1° from the last successful output. Update the
 attempt timestamp before `SetAngle` so a disconnected device cannot cause an I2C
 retry storm; update the current angle only after success. On failure, stop moving
@@ -80,13 +79,13 @@ gradual movement and then keep the last angle.
 - [ ] **Step 1: Document mapping and runtime behavior**
 
 Record `-90°→75°`, `0°→105°`, `+90°→135°`, the 1° deadband, 200 ms minimum
-interval, latest-target queue, safe startup sequence, and hold-last-angle behavior.
+interval, latest-target queue, 105° startup center, and hold-last-angle behavior.
 
 - [ ] **Step 2: Run static verification**
 
-Read IDE diagnostics for all edited C++ headers and sources. Search for the old
-unsafe startup angle sequence and confirm the application callback calls only the
-board hook, while `Pca9685::SetAngle` appears in the Head worker/startup path.
+Read IDE diagnostics for all edited C++ headers and sources. Confirm startup
+calls `Pca9685::SetAngle` only once with 105°, the application callback calls
+only the board hook, and later angle writes happen only in the Head worker.
 
 - [ ] **Step 3: Hand off hardware verification**
 

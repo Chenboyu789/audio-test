@@ -1,7 +1,4 @@
 #include "audio_service.h"
-#include <algorithm>
-#include <array>
-#include <cmath>
 #include <esp_log.h>
 #include <cstring>
 
@@ -237,65 +234,6 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
     /* Update the last input time */
     last_input_time_ = std::chrono::steady_clock::now();
     debug_statistics_.input_count++;
-
-    // Diagnose the head board's MIC1/MIC2/MIC3 TDM channel mapping.
-    if (codec_->input_channels() == 3 && !data.empty()) {
-        static std::array<double, 3> energy{};
-        static std::array<double, 3> cross_energy{};
-        static std::array<int32_t, 3> peak{};
-        static uint64_t frame_count = 0;
-        static int64_t last_level_log_time_us = 0;
-
-        const size_t frames = data.size() / 3;
-        for (size_t frame = 0; frame < frames; ++frame) {
-            std::array<int32_t, 3> sample{};
-            for (size_t channel = 0; channel < 3; ++channel) {
-                sample[channel] = data[frame * 3 + channel];
-                energy[channel] +=
-                    static_cast<double>(sample[channel]) * sample[channel];
-                peak[channel] = std::max(
-                    peak[channel], std::abs(sample[channel]));
-            }
-            cross_energy[0] +=
-                static_cast<double>(sample[0]) * sample[1];
-            cross_energy[1] +=
-                static_cast<double>(sample[0]) * sample[2];
-            cross_energy[2] +=
-                static_cast<double>(sample[1]) * sample[2];
-        }
-        frame_count += frames;
-
-        const int64_t now_us = esp_timer_get_time();
-        if (frame_count > 0 &&
-            now_us - last_level_log_time_us >= 2000000) {
-            const auto correlation = [](
-                size_t pair, size_t first, size_t second) {
-                const double denominator =
-                    std::sqrt(energy[first] * energy[second]);
-                return denominator > 0.0
-                    ? cross_energy[pair] / denominator
-                    : 0.0;
-            };
-            ESP_LOGI(TAG,
-                "Input levels: MIC1 rms=%.1f peak=%ld, "
-                "REF rms=%.1f peak=%ld, MIC2 rms=%.1f peak=%ld, "
-                "corr(1,2)=%.2f corr(1,R)=%.2f corr(2,R)=%.2f",
-                std::sqrt(energy[0] / frame_count),
-                static_cast<long>(peak[0]),
-                std::sqrt(energy[1] / frame_count),
-                static_cast<long>(peak[1]),
-                std::sqrt(energy[2] / frame_count),
-                static_cast<long>(peak[2]),
-                correlation(1, 0, 2),
-                correlation(0, 0, 1),
-                correlation(2, 2, 1));
-            energy.fill(0.0);
-            cross_energy.fill(0.0);
-            peak.fill(0);
-            frame_count = 0;
-            last_level_log_time_us = now_us;
-        }
-    }
 
 #if CONFIG_USE_AUDIO_DEBUGGER
     // 音频调试：发送原始音频数据
